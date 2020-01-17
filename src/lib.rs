@@ -1,19 +1,21 @@
 use std::process::Command;
 use std::io::{BufWriter, stdout};
 use std::io::Write;
+use std::{thread, time};  // For sleeping
 
 pub struct Game {
     // dimensions of the map
     height: usize,
     width: usize,
 
-    // all locations in order and their values
-    pub map: Vec<Location>,
+    // all locations containing food
+    pub food_locations: Vec<Location>,
 
     // snake
     snake: Snake
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct Location {
     x: usize,
     y: usize,
@@ -31,6 +33,9 @@ impl Location {
             Direction::RIGHT => Location{x: self.x + 0, y: self.y + 1, location_type: self.location_type},
             Direction::LEFT => Location{x: self.x + 0, y: self.y - 1, location_type: self.location_type},
         }
+    }
+    pub fn matches(&self, x: usize, y: usize) -> bool {
+        self.x == x && self.y == y
     }
 }
 
@@ -76,41 +81,24 @@ impl Snake {
 impl Game {
     pub fn create(height: usize, width: usize) -> Game {
         let snake: Snake = Snake::new();
-        let mut map = Game{map: vec!(), height: height, width: width, snake: snake};
-        for x in 0 .. height {
-            for y in 0 .. width {
-                map.map.push(Location{x: x, y: y, location_type: LocationType::EMPTY});
-            }
-        }
-        map.map[3*width+3].location_type = LocationType::FOOD;
-        map
+        let mut game = Game{food_locations: vec!(), height: height, width: width, snake: snake};
+        game.food_locations.push(Location{x: 3, y: 3, location_type: LocationType::FOOD});
+        game
     }
     pub fn start(&mut self){
         self.draw();
         // TODO: wait for first keyboard press to start
         loop {
-            self.update();
+            self.snake.update();
             self.draw();
             if self.is_finished() {
                 println!("Game over!\tYou died with a score of {}", self.snake.score);
                 break;
             }
+            // TODO: sleep so an acceptable playing speed is reached
+            let sleeptime = time::Duration::from_secs(1);
+            thread::sleep(sleeptime);
         }
-    }
-    fn update(&mut self) {
-        self.snake.update();
-        self.update_map();
-    }
-    fn update_map(&mut self) {
-        let mut newmap = vec!();
-        self.map.iter().for_each(|loc| newmap.push(Location::from(loc)));
-        for loc in self.map.iter() {
-            match loc.location_type {
-                LocationType::SNAKE => if !self.snake.contains(loc) {newmap[loc.x * self.height + loc.y].location_type = LocationType::EMPTY},
-                _ => (),
-            }
-        }
-        self.map = newmap;
     }
     fn is_finished(&self) -> bool {
         // should I check for extra cases?
@@ -130,26 +118,57 @@ impl Game {
             panic!("failed to execute process: {}", e)
         });
 
-        let mut stream = BufWriter::new(stdout());
+        let mut map: Vec<Location> = vec!();
         // TODO: add border to game using | and ¨¨¨¨¨¨¨¨¨and ___________
-        for (i, location) in self.map.iter().enumerate() {
-            match location.location_type {
-                LocationType::EMPTY => stream.write(b" "),
-                LocationType::FOOD => stream.write(b"X"),
-                LocationType::SNAKE => stream.write(b"O"),
-            }.expect("Invalid stream write");
-            if i % (self.width - 1) == 0 {
-                stream.write(b"\n").expect("Invalid stream write");
+
+        // search for positions in food and snake sets
+        // TODO: optimize, lots of repeated useless checks every drawcycle!
+        for x in 0 .. self.height {
+            for y in 0 .. self.width {
+                let mut location = Location{x: x, y: y, location_type: LocationType::EMPTY};
+                let mut found_location = false;
+                for food_loc in self.food_locations.iter() {
+                    if food_loc.matches(x, y) {
+                        found_location = true;
+                        location = Location::from(food_loc);
+                        break;
+                    }
+                }
+                if !found_location {
+                    for snake_loc in self.snake.body.iter() {
+                        if snake_loc.matches(x, y) {
+                            location = Location::from(snake_loc);
+                            break;
+                        }
+                    }
+                }
+                map.push(location);
             }
         }
 
+        let mut stream = BufWriter::new(stdout());
+        // Draw the actual map
+        for (i, location) in map.iter().enumerate() {
+            // write!(stream, "{}", i).expect("Bad i write");
+            if i % (self.width) == 0 {
+                stream.write(b"\n").expect("Invalid stream write");
+            }
+            match location.location_type {
+                LocationType::EMPTY => stream.write(b"E"),
+                LocationType::FOOD => stream.write(b"X"),
+                LocationType::SNAKE => stream.write(b"O"),
+            }.expect("Invalid stream write");
+            
+        }
+
         println!("{}\tRUSTY SNAKE\n", String::from_utf8_lossy(&output.stdout));
+        println!("Amount of tiles: {}", map.len());
         stream.flush().expect("Error flushing stream!");
 
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum LocationType {
     EMPTY,
     FOOD,
